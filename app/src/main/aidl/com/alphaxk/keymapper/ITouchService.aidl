@@ -1,7 +1,6 @@
 package com.alphaxk.keymapper;
 
 interface ITouchService {
-    void injectTap(int x, int y);
-    void injectSwipe(int x1, int y1, int x2, int y2, int duration);
-    void injectMultiTouch(in int[] xs, in int[] ys, in int[] actions);
+    void injectMultiTouch(in int[] actions, in int[] ids, in int[] xs, in int[] ys);
+    void injectSwipe(float x1, float y1, float x2, float y2, int duration);
 }
