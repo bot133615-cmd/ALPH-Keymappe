@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -81,13 +82,10 @@ class MainActivity : AppCompatActivity() {
 
 class KeyMapperService : AccessibilityService() {
     private lateinit var windowManager: WindowManager
-    private var overlayView: View? = null
+    private var overlayView: FrameLayout? = null
+    private var mouseView: MouseInterceptorView? = null
     private val buttons = mutableListOf<KeyButton>()
     private var isEditMode = true
-    
-    // متغيرات تتبع الماوس
-    private var lastMouseX = 0f
-    private var lastMouseY = 0f
 
     companion object {
         var touchService: ITouchService? = null
@@ -104,7 +102,6 @@ class KeyMapperService : AccessibilityService() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-            // سر التخفى: عدم استقبال اللمس نهائياً في وضع اللعب
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -113,7 +110,21 @@ class KeyMapperService : AccessibilityService() {
 
         val rootLayout = FrameLayout(this)
         
-        // زرار التعديل/اللعب
+        // 1. طبقة الماوس (شفافة - بتقرا حركة الماوس وتعدي اللمس)
+        mouseView = MouseInterceptorView(this) { dx, dy ->
+            // تحريك الكاميرا في نص الشاشة
+            val centerX = 600f 
+            val centerY = 400f
+            if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+                touchService?.injectSwipe(centerX, centerY, centerX + (dx * 15), centerY + (dy * 15), 50)
+            }
+        }
+        rootLayout.addView(mouseView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, 
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // 2. زرار التعديل/اللعب
         val toggleBtn = TextView(this).apply {
             text = "تعديل"
             setTextColor(Color.WHITE)
@@ -122,14 +133,6 @@ class KeyMapperService : AccessibilityService() {
             setOnClickListener {
                 isEditMode = !isEditMode
                 text = if (isEditMode) "تعديل" else "لعب"
-                if (!isEditMode) {
-                    // في وضع اللعب: نخفي الأزرار ونخليها متستقبلش لمس عشان اللعبة تشتغل
-                    this@apply.alpha = 0f 
-                    visibility = View.GONE
-                } else {
-                    this@apply.alpha = 1f
-                    visibility = View.VISIBLE
-                }
                 updateButtonsMode()
             }
         }
@@ -138,13 +141,15 @@ class KeyMapperService : AccessibilityService() {
         }
         rootLayout.addView(toggleBtn, toggleParams)
 
-        // إضافة أزرار اللعب (WASD + Space + Click)
+        // 3. إضافة أزرار اللعب
         addKeyButton(rootLayout, KeyEvent.KEYCODE_W, 200f, 200f, "W")
         addKeyButton(rootLayout, KeyEvent.KEYCODE_A, 100f, 300f, "A")
         addKeyButton(rootLayout, KeyEvent.KEYCODE_S, 200f, 400f, "S")
         addKeyButton(rootLayout, KeyEvent.KEYCODE_D, 300f, 300f, "D")
         addKeyButton(rootLayout, KeyEvent.KEYCODE_SPACE, 800f, 400f, "Jump")
-        addKeyButton(rootLayout, KeyEvent.KEYCODE_SHIFT_LEFT, 150f, 400f, "Sprint")
+        // زرار كليك يمين (Aim) وكليك شمال (Fire)
+        addKeyButton(rootLayout, KeyEvent.KEYCODE_BUTTON_R1, 800f, 200f, "Aim")
+        addKeyButton(rootLayout, KeyEvent.KEYCODE_BUTTON_L1, 800f, 250f, "Fire")
 
         overlayView = rootLayout
         windowManager.addView(overlayView, params)
@@ -167,11 +172,11 @@ class KeyMapperService : AccessibilityService() {
         buttons.add(btn)
     }
 
-    private fun updateButtonsMode() { buttons.forEach { it.isEditMode = isEditMode; it.invalidate() } }
+    private fun updateButtonsMode() { 
+        buttons.forEach { it.isEditMode = isEditMode; it.invalidate() }
+        mouseView?.visibility = if (isEditMode) View.GONE else View.VISIBLE
+    }
 
-    // =========================================================================
-    // استقبال ضغطات الكيبورد
-    // =========================================================================
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (isEditMode) return false
         val btn = buttons.find { it.keyCode == event.keyCode }
@@ -188,29 +193,6 @@ class KeyMapperService : AccessibilityService() {
         return super.onKeyEvent(event)
     }
 
-    // =========================================================================
-    // استقبال حركة الماوس (للكاميرا والسحب)
-    // =========================================================================
-    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
-        if (isEditMode) return super.onGenericMotionEvent(event)
-        if (event.source and android.view.InputDevice.SOURCE_MOUSE == android.view.InputDevice.SOURCE_MOUSE) {
-            if (event.actionMasked == MotionEvent.ACTION_MOVE) {
-                val dx = event.getAxisValue(MotionEvent.AXIS_RELATIVE_X)
-                val dy = event.getAxisValue(MotionEvent.AXIS_RELATIVE_Y)
-                
-                // لو حركة الماوس سريعة، نسحب على الشاشة (تحكم الكاميرا)
-                if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-                    val centerX = 600f // منتصف الشاشة تقريباً
-                    val centerY = 400f
-                    touchService?.injectSwipe(centerX, centerY, centerX + (dx * 15), centerY + (dy * 15), 50)
-                }
-                return true
-            }
-        }
-        return super.onGenericMotionEvent(event)
-    }
-
-    // دالة إرسال اللمس المتزامن
     private fun sendTouch(btn: KeyButton, isDown: Boolean) {
         val pressedButtons = buttons.filter { it.isPressed }
         if (pressedButtons.isEmpty()) return
@@ -222,15 +204,13 @@ class KeyMapperService : AccessibilityService() {
 
         for (i in pressedButtons.indices) {
             val b = pressedButtons[i]
-            ids[i] = b.keyCode // نستخدم كود الزرار كمعرف للصباع
+            ids[i] = b.keyCode
             xs[i] = (b.x + b.width / 2).toInt()
             ys[i] = (b.y + b.height / 2).toInt()
             
-            // تحديد نوع الحركة
             actions[i] = if (pressedButtons.size == 1) {
                 if (isDown) MotionEvent.ACTION_DOWN else MotionEvent.ACTION_UP
             } else {
-                // لو في أكتر من صباع، نستخدم POINTER_DOWN أو POINTER_UP
                 val index = pressedButtons.size - 1
                 val mask = (index shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
                 if (isDown) MotionEvent.ACTION_POINTER_DOWN or mask else MotionEvent.ACTION_POINTER_UP or mask
@@ -247,6 +227,28 @@ class KeyMapperService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         overlayView?.let { windowManager.removeView(it) }
+    }
+}
+
+// ============================================================================
+// كلاس مخصص لاعتراض الماوس
+// ============================================================================
+class MouseInterceptorView(context: Context, private val onMove: (Float, Float) -> Unit) : View(context) {
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.source and InputDevice.SOURCE_MOUSE == InputDevice.SOURCE_MOUSE) {
+            if (event.actionMasked == MotionEvent.ACTION_MOVE) {
+                val dx = event.getAxisValue(MotionEvent.AXIS_RELATIVE_X)
+                val dy = event.getAxisValue(MotionEvent.AXIS_RELATIVE_Y)
+                onMove(dx, dy)
+                return true
+            }
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    // عشان نسمح للعبة إنها تستقبل اللمس العادي
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        return false 
     }
 }
 
