@@ -112,7 +112,6 @@ class KeyMapperService : AccessibilityService() {
         
         // 1. طبقة الماوس (شفافة - بتقرا حركة الماوس وتعدي اللمس)
         mouseView = MouseInterceptorView(this) { dx, dy ->
-            // تحريك الكاميرا في نص الشاشة
             val centerX = 600f 
             val centerY = 400f
             if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
@@ -147,7 +146,6 @@ class KeyMapperService : AccessibilityService() {
         addKeyButton(rootLayout, KeyEvent.KEYCODE_S, 200f, 400f, "S")
         addKeyButton(rootLayout, KeyEvent.KEYCODE_D, 300f, 300f, "D")
         addKeyButton(rootLayout, KeyEvent.KEYCODE_SPACE, 800f, 400f, "Jump")
-        // زرار كليك يمين (Aim) وكليك شمال (Fire)
         addKeyButton(rootLayout, KeyEvent.KEYCODE_BUTTON_R1, 800f, 200f, "Aim")
         addKeyButton(rootLayout, KeyEvent.KEYCODE_BUTTON_L1, 800f, 250f, "Fire")
 
@@ -181,11 +179,11 @@ class KeyMapperService : AccessibilityService() {
         if (isEditMode) return false
         val btn = buttons.find { it.keyCode == event.keyCode }
         btn?.let {
-            if (event.action == KeyEvent.ACTION_DOWN && !it.isPressed) {
-                it.isPressed = true
+            if (event.action == KeyEvent.ACTION_DOWN && !it.isActionPressed) {
+                it.isActionPressed = true
                 sendTouch(it, true)
-            } else if (event.action == KeyEvent.ACTION_UP && it.isPressed) {
-                it.isPressed = false
+            } else if (event.action == KeyEvent.ACTION_UP && it.isActionPressed) {
+                it.isActionPressed = false
                 sendTouch(it, false)
             }
             return true
@@ -194,7 +192,7 @@ class KeyMapperService : AccessibilityService() {
     }
 
     private fun sendTouch(btn: KeyButton, isDown: Boolean) {
-        val pressedButtons = buttons.filter { it.isPressed }
+        val pressedButtons = buttons.filter { it.isActionPressed }
         if (pressedButtons.isEmpty()) return
 
         val actions = IntArray(pressedButtons.size)
@@ -230,9 +228,6 @@ class KeyMapperService : AccessibilityService() {
     }
 }
 
-// ============================================================================
-// كلاس مخصص لاعتراض الماوس
-// ============================================================================
 class MouseInterceptorView(context: Context, private val onMove: (Float, Float) -> Unit) : View(context) {
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_MOUSE == InputDevice.SOURCE_MOUSE) {
@@ -246,7 +241,6 @@ class MouseInterceptorView(context: Context, private val onMove: (Float, Float) 
         return super.onGenericMotionEvent(event)
     }
 
-    // عشان نسمح للعبة إنها تستقبل اللمس العادي
     override fun onTouchEvent(event: MotionEvent): Boolean {
         return false 
     }
@@ -254,7 +248,7 @@ class MouseInterceptorView(context: Context, private val onMove: (Float, Float) 
 
 class KeyButton(context: Context, val keyCode: Int, val label: String) : View(context) {
     var isEditMode = true
-    var isPressed = false
+    var isActionPressed = false // <-- غيرنا الاسم هنا عشان ميتعارضش مع View
     var startX = 0f; var startY = 0f; var touchX = 0f; var touchY = 0f
 
     init { background = context.getDrawable(android.R.drawable.ic_menu_add) }
@@ -262,7 +256,7 @@ class KeyButton(context: Context, val keyCode: Int, val label: String) : View(co
     override fun onDraw(canvas: android.graphics.Canvas) {
         super.onDraw(canvas)
         val paint = android.graphics.Paint().apply {
-            color = if (isPressed) Color.GREEN else Color.WHITE
+            color = if (isActionPressed) Color.GREEN else Color.WHITE
             textSize = 50f
             textAlign = android.graphics.Paint.Align.CENTER
         }
