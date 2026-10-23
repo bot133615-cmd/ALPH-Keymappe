@@ -1,17 +1,13 @@
 package com.alphaxk.keymapper
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
-import android.graphics.Path
 import android.graphics.PixelFormat
-import android.graphics.PointF
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.KeyEvent
@@ -24,53 +20,59 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import java.io.DataOutputStream
+import rikka.shizuku.Shizuku
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
-// ============================================================================
-// 1. Main Activity: إدارة الصلاحيات وتشغيل الخدمة
-// ============================================================================
 class MainActivity : AppCompatActivity() {
+    private val REQUEST_CODE = 1001
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // واجهة بسيطة لبدء الخدمة
         val layout = FrameLayout(this)
         layout.setBackgroundColor(Color.BLACK)
         
         val btn = Button(this)
-        btn.text = "تشغيل ALPHA Keymapper (يتطلب Root)"
+        btn.text = "تشغيل ALPHA Keymapper (Shizuku)"
         btn.setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
                 startActivity(intent)
                 Toast.makeText(this, "الرجاء إعطاء صلاحية Overlay ثم المحاولة مجدداً", Toast.LENGTH_LONG).show()
             } else {
-                // طلب صلاحية Root للـ Injection السريع
-                if (RootUtils.checkRoot()) {
-                    startService(Intent(this, KeyMapperService::class.java))
-                    Toast.makeText(this, "تم التشغيل! اذهب لإعدادات Accessibility وفعل الخدمة.", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(this, "الرجاء منح صلاحية Root للأداة (ضروري للـ Multi-touch)", Toast.LENGTH_LONG).show()
-                }
+                checkShizukuPermission()
             }
         }
         
         layout.addView(btn)
         setContentView(layout)
+
+        // طلب صلاحية Shizuku
+        Shizuku.addRequestPermissionResultListener { requestCode, grantResult ->
+            if (requestCode == REQUEST_CODE && grantResult == PackageManager.PERMISSION_GRANTED) {
+                startService(Intent(this, KeyMapperService::class.java))
+                Toast.makeText(this, "تم التشغيل! اذهب لإعدادات Accessibility وفعل الخدمة.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun checkShizukuPermission() {
+        if (Shizuku.isPreV11() || Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+            startService(Intent(this, KeyMapperService::class.java))
+            Toast.makeText(this, "تم التشغيل! اذهب لإعدادات Accessibility وفعل الخدمة.", Toast.LENGTH_LONG).show()
+        } else {
+            Shizuku.requestPermission(REQUEST_CODE)
+        }
+    }
+
+    override fun onDestroy() {
+        Shizuku.removeRequestPermissionResultListener { _, _ -> }
+        super.onDestroy()
     }
 }
 
-// ============================================================================
-// 2. Accessibility Service: القلب النابض للأداة (Overlay + Input Capture)
-// ============================================================================
 class KeyMapperService : AccessibilityService() {
-
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
-    
-    // إحداثيات الأزرار وإعداداتها
     private val buttons = mutableListOf<KeyButton>()
     private var isEditMode = true
 
@@ -78,7 +80,6 @@ class KeyMapperService : AccessibilityService() {
         super.onServiceConnected()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         showOverlay()
-        Toast.makeText(this, "ALPHA Keymapper جاهز", Toast.LENGTH_SHORT).show()
     }
 
     private fun showOverlay() {
@@ -96,8 +97,6 @@ class KeyMapperService : AccessibilityService() {
         )
 
         val rootLayout = FrameLayout(this)
-        
-        // زر تعديل/لعب في الجانب
         val toggleBtn = TextView(this)
         toggleBtn.text = "تعديل"
         toggleBtn.setTextColor(Color.WHITE)
@@ -115,7 +114,6 @@ class KeyMapperService : AccessibilityService() {
         }
         rootLayout.addView(toggleBtn, toggleParams)
 
-        // إضافة زر افتراضي للكيبورد
         addKeyButton(rootLayout, KeyEvent.KEYCODE_W, 200f, 200f, "W", ActionType.TAP)
 
         overlayView = rootLayout
@@ -131,7 +129,6 @@ class KeyMapperService : AccessibilityService() {
             var initialY = 0
             var initialTouchX = 0f
             var initialTouchY = 0f
-            
             override fun onTouch(v: View, event: MotionEvent): Boolean {
                 if (isEditMode) {
                     when (event.action) {
@@ -158,16 +155,12 @@ class KeyMapperService : AccessibilityService() {
         buttons.forEach { it.isEditMode = isEditMode; it.invalidate() }
     }
 
-    // استقبال ضغطات الكيبورد
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (isEditMode) return false
         val btn = buttons.find { it.keyCode == event.keyCode }
         btn?.let {
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                it.triggerAction(true)
-            } else if (event.action == KeyEvent.ACTION_UP) {
-                it.triggerAction(false)
-            }
+            if (event.action == KeyEvent.ACTION_DOWN) it.triggerAction(true)
+            else if (event.action == KeyEvent.ACTION_UP) it.triggerAction(false)
             return true
         }
         return super.onKeyEvent(event)
@@ -175,16 +168,12 @@ class KeyMapperService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
-
     override fun onDestroy() {
         super.onDestroy()
         overlayView?.let { windowManager.removeView(it) }
     }
 }
 
-// ============================================================================
-// 3. فئات مساعدة (KeyButton, ActionType, TouchInjector)
-// ============================================================================
 enum class ActionType { TAP, HOLD, DRAG }
 
 class KeyButton(
@@ -193,13 +182,11 @@ class KeyButton(
     val label: String, 
     var actionType: ActionType
 ) : View(context) {
-    
     var isEditMode = true
     private var isPressed = false
 
     init {
         background = context.getDrawable(android.R.drawable.ic_menu_add)
-        // رسم بسيط للزر
     }
 
     override fun onDraw(canvas: android.graphics.Canvas) {
@@ -213,7 +200,7 @@ class KeyButton(
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(150, 150) // حجم الزر
+        setMeasuredDimension(150, 150)
     }
 
     fun triggerAction(pressed: Boolean) {
@@ -221,68 +208,40 @@ class KeyButton(
         invalidate()
         if (pressed) {
             when (actionType) {
-                ActionType.TAP -> TouchInjector.injectTouch(x + width/2, y + height/2, true)
-                ActionType.HOLD -> TouchInjector.injectTouch(x + width/2, y + height/2, true)
-                ActionType.DRAG -> TouchInjector.injectSwipe(x + width/2, y + height/2, x + width/2 + 200, y + height/2, 300)
+                ActionType.TAP, ActionType.HOLD -> ShizukuUtils.injectTouch(x + width/2, y + height/2, true)
+                ActionType.DRAG -> ShizukuUtils.injectSwipe(x + width/2, y + height/2, x + width/2 + 200, y + height/2, 300)
             }
         } else {
             if (actionType == ActionType.TAP || actionType == ActionType.HOLD) {
-                TouchInjector.injectTouch(x + width/2, y + height/2, false)
+                ShizukuUtils.injectTouch(x + width/2, y + height/2, false)
             }
         }
     }
 }
 
-// ============================================================================
-// 4. محرك الحقن (Touch Injection) - يتطلب Root
-// ============================================================================
-object TouchInjector {
+object ShizukuUtils {
     private val executor = Executors.newSingleThreadExecutor()
 
-    // دالة الحقن (Swipe أو Tap)
     fun injectTouch(x: Float, y: Float, down: Boolean) {
         executor.execute {
             try {
-                // استخدام Input command المباشر من الروت (سريع جداً)
                 val action = if (down) "DOWN" else "UP"
-                val cmd = "input motionevent $action $x $y"
-                RootUtils.executeCommand(cmd)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+                executeCommand("input motionevent $action $x $y")
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
     fun injectSwipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int) {
         executor.execute {
-            try {
-                val cmd = "input swipe $x1 $y1 $x2 $y2 $durationMs"
-                RootUtils.executeCommand(cmd)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-}
-
-object RootUtils {
-    fun checkRoot(): Boolean {
-        return try {
-            val process = Runtime.getRuntime().exec("su -c id")
-            process.waitFor(1, TimeUnit.SECONDS)
-            process.exitValue() == 0
-        } catch (e: Exception) {
-            false
+            try { executeCommand("input swipe $x1 $y1 $x2 $y2 $durationMs") } 
+            catch (e: Exception) { e.printStackTrace() }
         }
     }
 
-    fun executeCommand(cmd: String) {
+    private fun executeCommand(cmd: String) {
+        if (!Shizuku.pingBinder()) return
         try {
-            val process = Runtime.getRuntime().exec("su")
-            val os = DataOutputStream(process.outputStream)
-            os.writeBytes("$cmd\n")
-            os.writeBytes("exit\n")
-            os.flush()
+            val process = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
             process.waitFor()
         } catch (e: Exception) {
             e.printStackTrace()
