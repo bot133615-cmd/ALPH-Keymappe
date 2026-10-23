@@ -4,9 +4,8 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
-import android.view.MotionEvent.PointerCoords
-import android.view.MotionEvent.PointerProperties
 import java.lang.reflect.Method
+import kotlin.random.Random
 
 class TouchService : ITouchService.Stub() {
     private val inputManager: Any by lazy {
@@ -24,59 +23,76 @@ class TouchService : ITouchService.Stub() {
         )
     }
 
-    override fun injectTap(x: Int, y: Int) {
-        val downTime = SystemClock.uptimeMillis()
-        val props = arrayOf(createPointerProperties(0))
-        val coords = arrayOf(createPointerCoords(x.toFloat(), y.toFloat()))
-        val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, 1, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
-        val up = MotionEvent.obtain(downTime, downTime + 50, MotionEvent.ACTION_UP, 1, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
-        inject(down); inject(up)
-    }
+    // دالة الحقن المتزامن (Multi-touch)
+    override fun injectMultiTouch(actions: IntArray, ids: IntArray, xs: IntArray, ys: IntArray) {
+        val pointerCount = actions.size
+        if (pointerCount == 0) return
 
-    override fun injectSwipe(x1: Int, y1: Int, x2: Int, y2: Int, duration: Int) {
-        val downTime = SystemClock.uptimeMillis()
-        val props = arrayOf(createPointerProperties(0))
-        var eventTime = downTime
-        val steps = duration / 16
-        val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, 1, props, arrayOf(createPointerCoords(x1.toFloat(), y1.toFloat())), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
-        inject(down)
-        for (i in 1..steps) {
-            eventTime = downTime + (i * 16L)
-            val fraction = i.toFloat() / steps
-            val x = x1 + (x2 - x1) * fraction
-            val y = y1 + (y2 - y1) * fraction
-            val move = MotionEvent.obtain(downTime, eventTime, MotionEvent.ACTION_MOVE, 1, props, arrayOf(createPointerCoords(x, y)), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
-            inject(move)
+        // إضافة اهتزاز بشري (Jitter) بسيط عشان نتخفى عن الـ Anti-Cheat
+        val jitterX = Random.nextFloat() * 2f - 1f
+        val jitterY = Random.nextFloat() * 2f - 1f
+        
+        val props = Array(pointerCount) { i ->
+            MotionEvent.PointerProperties().apply {
+                id = ids[i]
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
         }
-        val up = MotionEvent.obtain(downTime, eventTime + 16, MotionEvent.ACTION_UP, 1, props, arrayOf(createPointerCoords(x2.toFloat(), y2.toFloat())), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
-        inject(up)
-    }
-
-    override fun injectMultiTouch(xs: IntArray, ys: IntArray, actions: IntArray) {
-        val count = xs.size
-        val props = Array(count) { createPointerProperties(it) }
-        val coords = Array(count) { i -> createPointerCoords(xs[i].toFloat(), ys[i].toFloat()) }
-        val downTime = SystemClock.uptimeMillis()
-        for (i in 0 until count) {
-            val action = actions[i]
-            val mask = (action shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_DOWN
-            val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), mask, count, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
-            inject(event)
+        val coords = Array(pointerCount) { i ->
+            MotionEvent.PointerCoords().apply {
+                x = xs[i] + jitterX
+                y = ys[i] + jitterY
+                pressure = 1f
+                size = 1f
+            }
         }
-    }
 
-    private fun inject(event: MotionEvent) {
+        val downTime = SystemClock.uptimeMillis()
+        
+        // بنبعت الحدث الأساسي
+        val event = MotionEvent.obtain(
+            downTime, SystemClock.uptimeMillis(), 
+            actions[0], pointerCount, props, coords, 
+            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
+        
         try {
-            injectMethod.invoke(inputManager, event, 0) // 0 = INJECT_INPUT_EVENT_MODE_ASYNC
-        } catch (e: Exception) { e.printStackTrace() }
+            injectMethod.invoke(inputManager, event, 0) // 0 = ASYNC
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         event.recycle()
     }
 
-    private fun createPointerProperties(id: Int): PointerProperties {
-        return PointerProperties().apply { this.id = id; toolType = MotionEvent.TOOL_TYPE_FINGER }
+    // دالة السحب (عشان الماوس)
+    override fun injectSwipe(x1: Float, y1: Float, x2: Float, y2: Float, duration: Int) {
+        val downTime = SystemClock.uptimeMillis()
+        val steps = duration / 16
+        val props = arrayOf(MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER })
+        
+        var eventTime = downTime
+        val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, 1, props, arrayOf(createCoords(x1, y1)), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+        inject(down)
+
+        for (i in 1..steps) {
+            eventTime = downTime + (i * 16L)
+            val fraction = i.toFloat() / steps
+            // منحنى بشري بدل الخط المستقيم
+            val x = x1 + (x2 - x1) * fraction + (Random.nextFloat() - 0.5f) * 2f
+            val y = y1 + (y2 - y1) * fraction + (Random.nextFloat() - 0.5f) * 2f
+            val move = MotionEvent.obtain(downTime, eventTime, MotionEvent.ACTION_MOVE, 1, props, arrayOf(createCoords(x, y)), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+            inject(move)
+        }
+        val up = MotionEvent.obtain(downTime, eventTime + 16, MotionEvent.ACTION_UP, 1, props, arrayOf(createCoords(x2, y2)), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+        inject(up)
     }
 
-    private fun createPointerCoords(x: Float, y: Float): PointerCoords {
-        return PointerCoords().apply { this.x = x; this.y = y; pressure = 1f; size = 1f }
+    private fun createCoords(x: Float, y: Float) = MotionEvent.PointerCoords().apply {
+        this.x = x; this.y = y; pressure = 1f; size = 1f
+    }
+
+    private fun inject(event: MotionEvent) {
+        try { injectMethod.invoke(inputManager, event, 0) } catch (e: Exception) { e.printStackTrace() }
+        event.recycle()
     }
 }
