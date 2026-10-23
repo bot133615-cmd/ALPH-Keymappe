@@ -27,6 +27,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    
+    // هذا الجزء هو اللي كان ناقص وموقف البناء
+    buildFeatures {
+        aidl = true
+    }
 }
 
 dependencies {
